@@ -1,0 +1,17 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Input csv data
+*交易账单*.csv
+
+# Generated reports
+reports/
+.matplotlib/
