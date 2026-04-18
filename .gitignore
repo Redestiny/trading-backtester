@@ -1,17 +1,17 @@
-# Python-generated files
+# Python related
 __pycache__/
-*.py[oc]
-build/
-dist/
-wheels/
-*.egg-info
-
-# Virtual environments
 .venv
 
-# Input csv data
-*交易账单*.csv
+# IDE
+.vscode/
+.idea/
 
-# Generated reports
+# OS
+.DS_Store
+
+# Data files
+*.csv
 reports/
+
+# Matplotlib cache
 .matplotlib/

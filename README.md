@@ -20,3 +20,9 @@ trading-backtester/
   ├─report.md                   # 交易报告
   └─trades.csv                  # 交易记录
 ```
+
+(可选)在`config.py`中设置单笔风险:
+```python
+# Single Trade Risk (the proportion of total capital allocated to a single trade)
+SINGLE_TRADE_RISK = 0.03        # 默认值为0.03(3%),可更改
+```

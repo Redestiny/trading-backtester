@@ -30,9 +30,10 @@ CLOSE_TYPES = {"平多": "long", "平空": "short"}
 FUNDING_TYPES = {"资金费收入", "资金费支出"}
 MANUAL_MARGIN_TYPES = {"手动追加保证金"}
 ZERO = Decimal("0")
-# 1R is defined as this fraction of account equity at the first fill of a trade.
-R_MULTIPLE_EQUITY_FRACTION = Decimal("0.03")
 
+from config import SINGLE_TRADE_RISK
+
+R_MULTIPLE_EQUITY_FRACTION = Decimal(SINGLE_TRADE_RISK)
 
 @dataclass(slots=True)
 class LedgerRow:
