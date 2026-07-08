@@ -3,7 +3,7 @@ from __future__ import annotations
 import csv
 import math
 import os
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation, getcontext
@@ -33,7 +33,7 @@ ZERO = Decimal("0")
 
 from config import SINGLE_TRADE_RISK
 
-R_MULTIPLE_EQUITY_FRACTION = Decimal(SINGLE_TRADE_RISK)
+R_MULTIPLE_EQUITY_FRACTION = Decimal(str(SINGLE_TRADE_RISK))
 
 @dataclass(slots=True)
 class LedgerRow:
@@ -140,6 +140,7 @@ class AnalysisResult:
     carryover_cycles: list[TradeCycle]
     unfinished_cycles: list[TradeCycle]
     daily_equity: list[tuple[date, Decimal]]
+    skipped_row_types: dict[str, int]
     summary: SummaryMetrics
 
 
@@ -186,27 +187,30 @@ def load_ledger(csv_path: Path) -> tuple[str, list[LedgerRow]]:
         metadata_line = handle.readline().strip()
         reader = csv.DictReader(handle)
         rows: list[LedgerRow] = []
-        for raw_row in reader:
+        for line_number, raw_row in enumerate(reader, start=3):
             normalized = {normalize_text(key): normalize_text(value) for key, value in raw_row.items()}
-            rows.append(
-                LedgerRow(
-                    row_id=int(normalized["id"]),
-                    order_id=normalized["关联订单id"],
-                    timestamp=parse_datetime(normalized["时间"]),
-                    bill_type=normalized["账单类型"],
-                    symbol=normalized["交易品种"],
-                    trade_type=normalized["交易类型"],
-                    quantity=decimal_from_text(normalized["数量"]),
-                    price=decimal_from_text(normalized["成交价"]),
-                    pnl=decimal_from_text(normalized["收益"]),
-                    fee=decimal_from_text(normalized["手续费"]),
-                    position_delta=decimal_from_text(normalized["仓位余额变动"]),
-                    position_balance=decimal_from_text(normalized["仓位余额"]),
-                    account_delta=decimal_from_text(normalized["交易账户余额变动"]),
-                    account_balance=decimal_from_text(normalized["交易账户余额"]),
-                    currency=normalized["交易账户余额单位"],
+            try:
+                rows.append(
+                    LedgerRow(
+                        row_id=int(normalized["id"]),
+                        order_id=normalized["关联订单id"],
+                        timestamp=parse_datetime(normalized["时间"]),
+                        bill_type=normalized["账单类型"],
+                        symbol=normalized["交易品种"],
+                        trade_type=normalized["交易类型"],
+                        quantity=decimal_from_text(normalized["数量"]),
+                        price=decimal_from_text(normalized["成交价"]),
+                        pnl=decimal_from_text(normalized["收益"]),
+                        fee=decimal_from_text(normalized["手续费"]),
+                        position_delta=decimal_from_text(normalized["仓位余额变动"]),
+                        position_balance=decimal_from_text(normalized["仓位余额"]),
+                        account_delta=decimal_from_text(normalized["交易账户余额变动"]),
+                        account_balance=decimal_from_text(normalized["交易账户余额"]),
+                        currency=normalized["交易账户余额单位"],
+                    )
                 )
-            )
+            except (KeyError, ValueError) as exc:
+                raise ValueError(f"Failed to parse CSV line {line_number}: {exc}") from exc
     rows.sort(key=lambda row: (row.timestamp, row.row_id))
     return metadata_line, rows
 
@@ -220,7 +224,7 @@ def classify_row(row: LedgerRow) -> str:
         return "funding"
     if row.trade_type in MANUAL_MARGIN_TYPES:
         return "manual_margin"
-    raise ValueError(f"Unsupported trade type: {row.trade_type}")
+    return "skipped"
 
 
 def reconstruct_trade_cycles(rows: list[LedgerRow]) -> tuple[list[TradeCycle], list[TradeCycle], list[TradeCycle]]:
@@ -237,7 +241,7 @@ def reconstruct_trade_cycles(rows: list[LedgerRow]) -> tuple[list[TradeCycle], l
 
         for row in symbol_rows:
             row_kind = classify_row(row)
-            if row_kind == "manual_margin":
+            if row_kind in ("manual_margin", "skipped"):
                 continue
 
             if row_kind == "funding":
@@ -257,8 +261,9 @@ def reconstruct_trade_cycles(rows: list[LedgerRow]) -> tuple[list[TradeCycle], l
                 )
 
             if row_kind == "open":
-                if current.carryover:
-                    raise ValueError(f"Carryover cycle for {symbol} encountered a visible opening trade.")
+                # Funding accrues only while a position is open, so an opening
+                # row inside a carryover cycle is an add to the carried
+                # position; the cycle stays excluded as carryover.
                 current.open_rows.append(row)
                 continue
 
@@ -441,6 +446,7 @@ def compute_risk_metrics(
 
 def analyze_csv(csv_path: Path) -> AnalysisResult:
     metadata_line, rows = load_ledger(csv_path)
+    skipped_row_types = dict(Counter(row.trade_type for row in rows if classify_row(row) == "skipped"))
     included_cycles, carryover_cycles, unfinished_cycles = reconstruct_trade_cycles(rows)
     start_equity, event_points, end_equity = build_equity_curve(included_cycles)
     daily_equity = build_daily_equity(event_points, start_equity)
@@ -486,6 +492,7 @@ def analyze_csv(csv_path: Path) -> AnalysisResult:
         carryover_cycles=carryover_cycles,
         unfinished_cycles=unfinished_cycles,
         daily_equity=daily_equity,
+        skipped_row_types=skipped_row_types,
         summary=summary,
     )
 
@@ -632,6 +639,7 @@ def write_markdown_report(result: AnalysisResult, output_paths: dict[str, Path])
         f"Included trades: {summary.total_trades}",
         f"Excluded carryover trades: {len(result.carryover_cycles)}",
         f"Excluded unfinished trades: {len(result.unfinished_cycles)}",
+        f"Skipped unsupported rows: {format_skipped_rows(result.skipped_row_types)}",
         f"Wins / Losses / Breakeven: {summary.wins} / {summary.losses} / {summary.breakeven}",
         f"Win rate: {format_percent(summary.win_rate)}",
         f"Loss rate: {format_percent(summary.loss_rate)}",
@@ -647,6 +655,14 @@ def write_markdown_report(result: AnalysisResult, output_paths: dict[str, Path])
         f"End equity: {format_money(summary.end_equity)} USDT"
     ]
     output_paths["report_markdown"].write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def format_skipped_rows(skipped_row_types: dict[str, int]) -> str:
+    if not skipped_row_types:
+        return "0"
+    total = sum(skipped_row_types.values())
+    details = ", ".join(f"{name} x{count}" for name, count in sorted(skipped_row_types.items()))
+    return f"{total} ({details})"
 
 
 def format_percent(value: float) -> str:
@@ -677,6 +693,7 @@ def print_summary(result: AnalysisResult, output_paths: dict[str, Path]) -> None
     print(f"Included trades: {summary.total_trades}")
     print(f"Excluded carryover trades: {len(result.carryover_cycles)}")
     print(f"Excluded unfinished trades: {len(result.unfinished_cycles)}")
+    print(f"Skipped unsupported rows: {format_skipped_rows(result.skipped_row_types)}")
     print(f"Wins / Losses / Breakeven: {summary.wins} / {summary.losses} / {summary.breakeven}")
     print(f"Win rate: {format_percent(summary.win_rate)}")
     print(f"Loss rate: {format_percent(summary.loss_rate)}")

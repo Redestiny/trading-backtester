@@ -1,7 +1,7 @@
 [project]
-name = "trading"
+name = "trading-backtester"
 version = "0.1.0"
-description = "Add your description here"
+description = "Analyze OKX unified account ledger CSVs and generate trading performance reports."
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [

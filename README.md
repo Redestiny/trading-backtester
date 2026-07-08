@@ -11,14 +11,14 @@ uv sync             # 安装依赖
 python main.py      # 运行程序
 ```
 
-3.查看回测报告:
+3.查看回测报告(文件名带生成日期，重名时自动追加`_02`等后缀):
 ```text
 trading-backtester/
 └─reports/
-  ├─equity_curve.png            # 权益曲线
-  ├─pnl_r_distribution.png      # 盈亏分布图
-  ├─report.md                   # 交易报告
-  └─trades.csv                  # 交易记录
+  ├─equity_curve_20260708.png            # 权益曲线
+  ├─pnl_r_distribution_20260708.png      # 盈亏分布图
+  ├─report_20260708.md                   # 交易报告
+  └─trades_20260708.csv                  # 交易记录
 ```
 
 (可选)在`config.py`中设置单笔风险:
