@@ -119,6 +119,9 @@ class SummaryMetrics:
     win_rate: float
     loss_rate: float
     expectancy: Decimal
+    average_win_r: Decimal
+    average_loss_r: Decimal
+    largest_loss_r: Decimal
     payoff_ratio: float
     profit_factor: float
     annualized_return: float
@@ -341,7 +344,9 @@ def build_daily_equity(
     return daily_series
 
 
-def compute_trade_metrics(cycles: list[TradeCycle]) -> tuple[int, int, int, float, float, Decimal, float, float, int]:
+def compute_trade_metrics(
+    cycles: list[TradeCycle],
+) -> tuple[int, int, int, float, float, Decimal, Decimal, Decimal, Decimal, float, float, int]:
     ordered_cycles = sorted(cycles, key=lambda cycle: (cycle.closed_at or datetime.min, cycle.symbol))
     net_values = [cycle.net_pnl for cycle in ordered_cycles]
 
@@ -352,21 +357,27 @@ def compute_trade_metrics(cycles: list[TradeCycle]) -> tuple[int, int, int, floa
     decisive_total = len(wins) + len(losses)
     win_rate = len(wins) / decisive_total if decisive_total else 0.0
     loss_rate = len(losses) / decisive_total if decisive_total else 0.0
-    expectancy = sum(net_values, ZERO) / Decimal(len(net_values)) if net_values else ZERO
 
-    average_win = (sum(wins, ZERO) / Decimal(len(wins))) if wins else ZERO
-    average_loss = (sum((-value for value in losses), ZERO) / Decimal(len(losses))) if losses else ZERO
-    if average_loss == ZERO:
-        payoff_ratio = math.inf if average_win > ZERO else 0.0
-    else:
-        payoff_ratio = float(average_win / average_loss)
+    r_values = [cycle.r_multiple for cycle in ordered_cycles if cycle.r_multiple is not None]
+    win_r_values = [value for value in r_values if value > ZERO]
+    loss_r_values = [value for value in r_values if value < ZERO]
 
-    gross_profit = sum(wins, ZERO)
-    gross_loss = sum((-value for value in losses), ZERO)
-    if gross_loss == ZERO:
-        profit_factor = math.inf if gross_profit > ZERO else 0.0
+    expectancy = sum(r_values, ZERO) / Decimal(len(r_values)) if r_values else ZERO
+    average_win_r = sum(win_r_values, ZERO) / Decimal(len(win_r_values)) if win_r_values else ZERO
+    average_loss_r = sum(loss_r_values, ZERO) / Decimal(len(loss_r_values)) if loss_r_values else ZERO
+    largest_loss_r = min(loss_r_values) if loss_r_values else ZERO
+
+    if average_loss_r == ZERO:
+        payoff_ratio = math.inf if average_win_r > ZERO else 0.0
     else:
-        profit_factor = float(gross_profit / gross_loss)
+        payoff_ratio = float(average_win_r / -average_loss_r)
+
+    gross_profit_r = sum(win_r_values, ZERO)
+    gross_loss_r = sum((-value for value in loss_r_values), ZERO)
+    if gross_loss_r == ZERO:
+        profit_factor = math.inf if gross_profit_r > ZERO else 0.0
+    else:
+        profit_factor = float(gross_profit_r / gross_loss_r)
 
     current_streak = 0
     max_streak = 0
@@ -384,6 +395,9 @@ def compute_trade_metrics(cycles: list[TradeCycle]) -> tuple[int, int, int, floa
         win_rate,
         loss_rate,
         expectancy,
+        average_win_r,
+        average_loss_r,
+        largest_loss_r,
         payoff_ratio,
         profit_factor,
         max_streak,
@@ -451,9 +465,20 @@ def analyze_csv(csv_path: Path) -> AnalysisResult:
     start_equity, event_points, end_equity = build_equity_curve(included_cycles)
     daily_equity = build_daily_equity(event_points, start_equity)
 
-    wins, losses, breakeven, win_rate, loss_rate, expectancy, payoff_ratio, profit_factor, max_consecutive_losses = (
-        compute_trade_metrics(included_cycles)
-    )
+    (
+        wins,
+        losses,
+        breakeven,
+        win_rate,
+        loss_rate,
+        expectancy,
+        average_win_r,
+        average_loss_r,
+        largest_loss_r,
+        payoff_ratio,
+        profit_factor,
+        max_consecutive_losses,
+    ) = compute_trade_metrics(included_cycles)
     annualized_return, max_drawdown, sortino_ratio, calmar_ratio = compute_risk_metrics(
         start_equity,
         end_equity,
@@ -468,6 +493,9 @@ def analyze_csv(csv_path: Path) -> AnalysisResult:
         win_rate=win_rate,
         loss_rate=loss_rate,
         expectancy=expectancy,
+        average_win_r=average_win_r,
+        average_loss_r=average_loss_r,
+        largest_loss_r=largest_loss_r,
         payoff_ratio=payoff_ratio,
         profit_factor=profit_factor,
         annualized_return=annualized_return,
@@ -643,7 +671,10 @@ def write_markdown_report(result: AnalysisResult, output_paths: dict[str, Path])
         f"Wins / Losses / Breakeven: {summary.wins} / {summary.losses} / {summary.breakeven}",
         f"Win rate: {format_percent(summary.win_rate)}",
         f"Loss rate: {format_percent(summary.loss_rate)}",
-        f"Expectancy: {format_money(summary.expectancy)} USDT",
+        f"Expectancy: {summary.expectancy:.4f}R",
+        f"Average win: {summary.average_win_r:.4f}R",
+        f"Average loss: {summary.average_loss_r:.4f}R",
+        f"Largest loss: {summary.largest_loss_r:.4f}R",
         f"Payoff ratio: {format_ratio(summary.payoff_ratio)}",
         f"Profit factor: {format_ratio(summary.profit_factor)}",
         f"Annualized return: {format_percent(summary.annualized_return)}",
@@ -697,7 +728,10 @@ def print_summary(result: AnalysisResult, output_paths: dict[str, Path]) -> None
     print(f"Wins / Losses / Breakeven: {summary.wins} / {summary.losses} / {summary.breakeven}")
     print(f"Win rate: {format_percent(summary.win_rate)}")
     print(f"Loss rate: {format_percent(summary.loss_rate)}")
-    print(f"Expectancy: {format_money(summary.expectancy)} USDT")
+    print(f"Expectancy: {summary.expectancy:.4f}R")
+    print(f"Average win: {summary.average_win_r:.4f}R")
+    print(f"Average loss: {summary.average_loss_r:.4f}R")
+    print(f"Largest loss: {summary.largest_loss_r:.4f}R")
     print(f"Payoff ratio: {format_ratio(summary.payoff_ratio)}")
     print(f"Profit factor: {format_ratio(summary.profit_factor)}")
     print(f"Annualized return: {format_percent(summary.annualized_return)}")
